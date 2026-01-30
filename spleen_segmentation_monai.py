@@ -51,9 +51,9 @@ md5 = "410d4a301da4e5b2f6f86ec3ddba524e"
 
 compressed_file = os.path.join(root_dir, "Task09_Spleen.tar")
 data_dir = os.path.join(root_dir, "Task09_Spleen")
-data_dir = "./Task09_Spleen"  # --- IGNORE ---
+data_dir = "/home/johannes/Code/GNN_anisotropic_input_layer/Task09_Spleen"  # --- IGNORE ---
 if not os.path.exists(data_dir):
-    download_and_extract(resource, compressed_file, root_dir, md5)
+    download_and_extract(resource, compressed_file, data_dir, md5)
 
 train_images = sorted(glob.glob(os.path.join(data_dir, "imagesTr", "*.nii.gz")))
 train_labels = sorted(glob.glob(os.path.join(data_dir, "labelsTr", "*.nii.gz")))
@@ -77,7 +77,7 @@ for spacings_type in [ 'normal_resample']:
             os.environ["MEDCONV3D_SPACINGS_TYPE"] = "normal"
 
         mlflow.log_param("spacings_type", spacings_type)
-        resample_transform = Spacingd(keys=["image", "label"], pixdim=(1.5, 1.5, 2.0), mode=("bilinear", "nearest"))
+        resample_transform = Spacingd(keys=["image", "label"], pixdim=(0.8, 0.8, 5.0), mode=("bilinear", "nearest"))
         train_transforms = Compose(
             [
                 LoadImaged(keys=["image", "label"]),
@@ -180,6 +180,19 @@ for spacings_type in [ 'normal_resample']:
 
         iter_loader = iter(train_loader)
 
+        # spacings = []
+        # for a in iter_loader:
+        #     spacing = tuple(a["image"].pixdim[0])
+        #     print(f"Example image spacing: {spacing}")
+        #     spacings.append(spacing)
+        
+        # spacings = np.array(spacings)
+        # median_spacings = np.median(spacings, axis=0)
+        
+
+        # print("median spacing : " + str(median_spacings))
+        # exit()
+
         spacings_list = []
         for epoch in range(max_epochs):
             print("-" * 10)
@@ -209,6 +222,7 @@ for spacings_type in [ 'normal_resample']:
                 
                 if epoch == 1 and step == 0:            
                     mlflow.log_param("spacings_used", spacings_list)
+
 
                 outputs = model(inputs)
                 loss = loss_function(outputs, labels)
