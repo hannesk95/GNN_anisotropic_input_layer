@@ -1,0 +1,10 @@
+# dirs
+conda_env/
+__pycache__/
+
+# files
+*.nii.gz
+*.csv
+*.pt
+*.png
+*.ipynb
