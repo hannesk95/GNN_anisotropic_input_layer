@@ -64,206 +64,214 @@ set_determinism(seed=0)
 
 patch_size = (160, 160, 32)
 # 'during', 'after', 'normal'
-os.environ["MEDCONV3D_SPACINGS_TYPE"] = "after"
-mlflow.set_experiment(f"spleen_segmentation_monai_medconv3d_{os.environ['MEDCONV3D_SPACINGS_TYPE']}")
 
-train_transforms = Compose(
-    [
-        LoadImaged(keys=["image", "label"]),
-        EnsureChannelFirstd(keys=["image", "label"]),
-        ScaleIntensityRanged(
-            keys=["image"],
-            a_min=-57,
-            a_max=164,
-            b_min=0.0,
-            b_max=1.0,
-            clip=True,
-        ),
-        CropForegroundd(keys=["image", "label"], source_key="image", allow_smaller=True),
-        Orientationd(keys=["image", "label"], axcodes="RAS"),
-        # Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 1.0), mode=("bilinear", "nearest")),
-        RandCropByPosNegLabeld(
-            keys=["image", "label"],
-            label_key="label",
-            spatial_size=patch_size,
-            pos=1,
-            neg=1,
-            num_samples=2,
-            image_key="image",
-            image_threshold=0,
-        ),
-        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
-        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
-        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=2),
-        RandScaleIntensityd(keys="image", factors=0.1, prob=1.0),
-        RandShiftIntensityd(keys="image", offsets=0.1, prob=1.0),
-        # user can also add other random transforms
-        RandAffined(
-            keys=['image', 'label'],
-            mode=('bilinear', 'nearest'),
-            prob=0.0, spatial_size=patch_size,
-            rotate_range=(0, 0, np.pi/15),
-            scale_range=(0.1, 0.1, 0.1)),
-    ]
-)
-val_transforms = Compose(
-    [
-        LoadImaged(keys=["image", "label"]),
-        EnsureChannelFirstd(keys=["image", "label"]),
-        ScaleIntensityRanged(
-            keys=["image"],
-            a_min=-57,
-            a_max=164,
-            b_min=0.0,
-            b_max=1.0,
-            clip=True,
-        ),
-        CropForegroundd(keys=["image", "label"], source_key="image", allow_smaller=True),
-        Orientationd(keys=["image", "label"], axcodes="RAS"),
-        # Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 1.0), mode=("bilinear", "nearest")),
-    ]
-)
+mlflow.set_experiment("MedConv3D_spleen_segmentation_monai")
 
+for spacings_type in ['normal', 'during', 'after']:
 
+    mlflow.end_run() 
+    with mlflow.start_run(run_name=f"{spacings_type}"):
 
+        os.environ["MEDCONV3D_SPACINGS_TYPE"] = spacings_type
+        mlflow.log_param("spacings_type", spacings_type)
 
-train_ds = CacheDataset(data=train_files, transform=train_transforms, cache_rate=1.0, num_workers=4)
-# train_ds = Dataset(data=train_files, transform=train_transforms)
-
-# use batch_size=2 to load images and use RandCropByPosNegLabeld
-# to generate 2 x 4 images for network training
-train_loader = DataLoader(train_ds, batch_size=1, shuffle=True, num_workers=4)
-
-val_ds = CacheDataset(data=val_files, transform=val_transforms, cache_rate=1.0, num_workers=4)
-# val_ds = Dataset(data=val_files, transform=val_transforms)
-val_loader = DataLoader(val_ds, batch_size=1, num_workers=4)
-
-
-
-
-# standard PyTorch program style: create UNet, DiceLoss and Adam optimizer
-device = torch.device("cuda:0")
-model = UNet(
-    spatial_dims=3,
-    in_channels=1,
-    out_channels=2,
-    channels=(16, 32, 64, 128, 256),
-    strides=(2, 2, 2, 2),
-    num_res_units=2,
-    norm=Norm.INSTANCE,
-).to(device)
-loss_function = DiceCELoss(to_onehot_y=True, softmax=True)
-optimizer = torch.optim.SGD(model.parameters(), lr=1e-2, weight_decay=3e-5, momentum=0.99, nesterov=True)
-dice_metric = DiceMetric(include_background=False, reduction="mean")
-lr_scheduler = PolynomialLR(optimizer, total_iters=1000, power=0.9)
-
-max_epochs = 1000
-iterations_per_epoch = 25
-val_interval = 2
-best_metric = -1
-best_metric_epoch = -1
-epoch_loss_values = []
-metric_values = []
-post_pred = Compose([AsDiscrete(argmax=True, to_onehot=2)])
-post_label = Compose([AsDiscrete(to_onehot=2)])
-
-iter_loader = iter(train_loader)
-
-spacings_list = []
-for epoch in range(max_epochs):
-    print("-" * 10)
-    print(f"epoch {epoch + 1}/{max_epochs}")
-    model.train()
-    epoch_loss = 0
-    step = 0
-    for i in range(iterations_per_epoch):
-        try:
-            batch_data = next(iter_loader)
-        except Exception as e:
-            print(e)
-            iter_loader = iter(train_loader)
-            batch_data = next(iter_loader)
-
-        step += 1
-        inputs, labels = (
-            batch_data["image"].to(device),
-            batch_data["label"].to(device),
+        train_transforms = Compose(
+            [
+                LoadImaged(keys=["image", "label"]),
+                EnsureChannelFirstd(keys=["image", "label"]),
+                ScaleIntensityRanged(
+                    keys=["image"],
+                    a_min=-57,
+                    a_max=164,
+                    b_min=0.0,
+                    b_max=1.0,
+                    clip=True,
+                ),
+                CropForegroundd(keys=["image", "label"], source_key="image", allow_smaller=True),
+                Orientationd(keys=["image", "label"], axcodes="RAS"),
+                # Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 1.0), mode=("bilinear", "nearest")),
+                RandCropByPosNegLabeld(
+                    keys=["image", "label"],
+                    label_key="label",
+                    spatial_size=patch_size,
+                    pos=1,
+                    neg=1,
+                    num_samples=4,
+                    image_key="image",
+                    image_threshold=0,
+                ),
+                RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
+                RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
+                RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=2),
+                RandScaleIntensityd(keys="image", factors=0.1, prob=1.0),
+                RandShiftIntensityd(keys="image", offsets=0.1, prob=1.0),
+                # user can also add other random transforms
+                RandAffined(
+                    keys=['image', 'label'],
+                    mode=('bilinear', 'nearest'),
+                    prob=0.0, spatial_size=patch_size,
+                    rotate_range=(0, 0, np.pi/15),
+                    scale_range=(0.1, 0.1, 0.1)),
+            ]
         )
-        optimizer.zero_grad()
-        spacing = str(batch_data["image"].pixdim[0].tolist())[1:-1].replace(" ","")
-        os.environ["MEDCONV3D_SPACINGS"] = spacing
+        val_transforms = Compose(
+            [
+                LoadImaged(keys=["image", "label"]),
+                EnsureChannelFirstd(keys=["image", "label"]),
+                ScaleIntensityRanged(
+                    keys=["image"],
+                    a_min=-57,
+                    a_max=164,
+                    b_min=0.0,
+                    b_max=1.0,
+                    clip=True,
+                ),
+                CropForegroundd(keys=["image", "label"], source_key="image", allow_smaller=True),
+                Orientationd(keys=["image", "label"], axcodes="RAS"),
+                # Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 1.0), mode=("bilinear", "nearest")),
+            ]
+        )
 
-        if epoch == 0:
-            spacings_list.append(spacing)
-        
-        if epoch == 1 and step == 0:            
-            mlflow.log_param("spacings_used", spacings_list)
 
-        outputs = model(inputs)
-        loss = loss_function(outputs, labels)
-        loss.backward()
-        optimizer.step()
-        epoch_loss += loss.item()
-        print(f"{step}/{len(train_ds) // train_loader.batch_size}, " f"train_loss: {loss.item():.4f}")
-    epoch_loss /= step
-    epoch_loss_values.append(epoch_loss)
-    print(f"epoch {epoch + 1} average loss: {epoch_loss:.4f}")
 
-    mlflow.log_metric("train_loss", epoch_loss, step=epoch + 1)
 
-    print("LR scheduler lr : " + str(lr_scheduler.get_last_lr()))
-    lr_scheduler.step()
+        train_ds = CacheDataset(data=train_files, transform=train_transforms, cache_rate=0.0, num_workers=4)
+        # train_ds = Dataset(data=train_files, transform=train_transforms)
 
-    if (epoch + 1) % val_interval == 0:
-        model.eval()
-        with torch.no_grad():
-            for val_data in val_loader:
-                val_inputs, val_labels = (
-                    val_data["image"].to(device),
-                    val_data["label"].to(device),
+        # use batch_size=2 to load images and use RandCropByPosNegLabeld
+        # to generate 2 x 4 images for network training
+        train_loader = DataLoader(train_ds, batch_size=1, shuffle=True, num_workers=4)
+
+        val_ds = CacheDataset(data=val_files, transform=val_transforms, cache_rate=0.0, num_workers=4)
+        # val_ds = Dataset(data=val_files, transform=val_transforms)
+        val_loader = DataLoader(val_ds, batch_size=1, num_workers=4)
+
+
+
+
+        # standard PyTorch program style: create UNet, DiceLoss and Adam optimizer
+        device = torch.device("cuda:0")
+        model = UNet(
+            spatial_dims=3,
+            in_channels=1,
+            out_channels=2,
+            channels=(16, 32, 64, 128, 256),
+            strides=(2, 2, 2, 2),
+            num_res_units=2,
+            norm=Norm.INSTANCE,
+        ).to(device)
+        loss_function = DiceCELoss(to_onehot_y=True, softmax=True)
+        optimizer = torch.optim.SGD(model.parameters(), lr=1e-2, weight_decay=3e-5, momentum=0.99, nesterov=True)
+        dice_metric = DiceMetric(include_background=False, reduction="mean")
+        lr_scheduler = PolynomialLR(optimizer, total_iters=1000, power=0.9)
+
+        max_epochs = 1000
+        iterations_per_epoch = 25
+        val_interval = 2
+        best_metric = -1
+        best_metric_epoch = -1
+        epoch_loss_values = []
+        metric_values = []
+        post_pred = Compose([AsDiscrete(argmax=True, to_onehot=2)])
+        post_label = Compose([AsDiscrete(to_onehot=2)])
+
+        iter_loader = iter(train_loader)
+
+        spacings_list = []
+        for epoch in range(max_epochs):
+            print("-" * 10)
+            print(f"epoch {epoch + 1}/{max_epochs}")
+            model.train()
+            epoch_loss = 0
+            step = 0
+            for i in range(iterations_per_epoch):
+                try:
+                    batch_data = next(iter_loader)
+                except Exception as e:
+                    print(e)
+                    iter_loader = iter(train_loader)
+                    batch_data = next(iter_loader)
+
+                step += 1
+                inputs, labels = (
+                    batch_data["image"].to(device),
+                    batch_data["label"].to(device),
                 )
-                sw_batch_size = 4
-                val_outputs = sliding_window_inference(val_inputs, patch_size, sw_batch_size, model)
-                val_outputs = [post_pred(i) for i in decollate_batch(val_outputs)]
-                val_labels = [post_label(i) for i in decollate_batch(val_labels)]
-                # compute metric for current iteration
-                dice_metric(y_pred=val_outputs, y=val_labels)
+                optimizer.zero_grad()
+                spacing = str(batch_data["image"].pixdim[0].tolist())[1:-1].replace(" ","")
+                os.environ["MEDCONV3D_SPACINGS"] = spacing
 
-            # aggregate the final mean dice result
-            metric = dice_metric.aggregate().item()
-            # reset the status for next validation round
-            dice_metric.reset()
+                if epoch == 0:
+                    spacings_list.append(spacing)
+                
+                if epoch == 1 and step == 0:            
+                    mlflow.log_param("spacings_used", spacings_list)
 
-            metric_values.append(metric)
-            if metric > best_metric:
-                best_metric = metric
-                best_metric_epoch = epoch + 1
-                torch.save(model.state_dict(), os.path.join(root_dir, "best_metric_model.pth"))
-                print("saved new best metric model")
-            print(
-                f"current epoch: {epoch + 1} current mean dice: {metric:.4f}"
-                f"\nbest mean dice: {best_metric:.4f} "
-                f"at epoch: {best_metric_epoch}"
-            )
-    
-        mlflow.log_metric("val_mean_dice", metric, step=epoch + 1)
-        
+                outputs = model(inputs)
+                loss = loss_function(outputs, labels)
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+                print(f"{step}/{len(train_ds) // train_loader.batch_size}, " f"train_loss: {loss.item():.4f}")
+            epoch_loss /= step
+            epoch_loss_values.append(epoch_loss)
+            print(f"epoch {epoch + 1} average loss: {epoch_loss:.4f}")
 
-print(f"train completed, best_metric: {best_metric:.4f} " f"at epoch: {best_metric_epoch}")
+            mlflow.log_metric("train_loss", epoch_loss, step=epoch + 1)
+
+            print("LR scheduler lr : " + str(lr_scheduler.get_last_lr()))
+            lr_scheduler.step()
+
+            if (epoch + 1) % val_interval == 0:
+                model.eval()
+                with torch.no_grad():
+                    for val_data in val_loader:
+                        val_inputs, val_labels = (
+                            val_data["image"].to(device),
+                            val_data["label"].to(device),
+                        )
+                        sw_batch_size = 4
+                        val_outputs = sliding_window_inference(val_inputs, patch_size, sw_batch_size, model)
+                        val_outputs = [post_pred(i) for i in decollate_batch(val_outputs)]
+                        val_labels = [post_label(i) for i in decollate_batch(val_labels)]
+                        # compute metric for current iteration
+                        dice_metric(y_pred=val_outputs, y=val_labels)
+
+                    # aggregate the final mean dice result
+                    metric = dice_metric.aggregate().item()
+                    # reset the status for next validation round
+                    dice_metric.reset()
+
+                    metric_values.append(metric)
+                    if metric > best_metric:
+                        best_metric = metric
+                        best_metric_epoch = epoch + 1
+                        torch.save(model.state_dict(), os.path.join(root_dir, "best_metric_model.pth"))
+                        print("saved new best metric model")
+                    print(
+                        f"current epoch: {epoch + 1} current mean dice: {metric:.4f}"
+                        f"\nbest mean dice: {best_metric:.4f} "
+                        f"at epoch: {best_metric_epoch}"
+                    )
+            
+                mlflow.log_metric("val_mean_dice", metric, step=epoch + 1)
+                
+
+        print(f"train completed, best_metric: {best_metric:.4f} " f"at epoch: {best_metric_epoch}")
 
 
-plt.figure("train", (12, 6))
-plt.subplot(1, 2, 1)
-plt.title("Epoch Average Loss")
-x = [i + 1 for i in range(len(epoch_loss_values))]
-y = epoch_loss_values
-plt.xlabel("epoch")
-plt.plot(x, y)
-plt.subplot(1, 2, 2)
-plt.title("Val Mean Dice")
-x = [val_interval * (i + 1) for i in range(len(metric_values))]
-y = metric_values
-plt.xlabel("epoch")
-plt.plot(x, y)
-plt.show()
+        plt.figure("train", (12, 6))
+        plt.subplot(1, 2, 1)
+        plt.title("Epoch Average Loss")
+        x = [i + 1 for i in range(len(epoch_loss_values))]
+        y = epoch_loss_values
+        plt.xlabel("epoch")
+        plt.plot(x, y)
+        plt.subplot(1, 2, 2)
+        plt.title("Val Mean Dice")
+        x = [val_interval * (i + 1) for i in range(len(metric_values))]
+        y = metric_values
+        plt.xlabel("epoch")
+        plt.plot(x, y)
+        plt.show()
 

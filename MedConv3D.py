@@ -152,9 +152,22 @@ class MedConv3D(torch.nn.Conv3d):
                 device=input.device, dtype=input.dtype
             )
 
-            # Broadcast spacing kernel over (out_channels, in_channels)
-            weight = weight * spacing_kernel[None, None, ...]
+            if weight.shape[-1] != 1:
+
+                # Broadcast spacing kernel over (out_channels, in_channels)
         
+                weight_before = weight.clone()
+                weight_after = weight_before * spacing_kernel[None, None, ...]
+
+                # print(f"weight_before.shape: {weight_before.shape=}")
+                # print(f"weight_after.shape: {weight_after.shape=}")
+                weight = weight_after
+            else:
+                pass
+        
+
+        # print(f"weight_before.shape: {weight.shape=}")
+
         if self.padding_mode != "zeros":
             assert "weshouldnt pad"
             return F.conv3d(
