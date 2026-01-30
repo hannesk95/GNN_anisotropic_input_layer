@@ -67,14 +67,17 @@ patch_size = (160, 160, 32)
 
 mlflow.set_experiment("MedConv3D_spleen_segmentation_monai")
 
-for spacings_type in ['normal', 'during', 'after']:
+for spacings_type in [ 'normal_resample']:
 
     mlflow.end_run() 
     with mlflow.start_run(run_name=f"{spacings_type}"):
 
         os.environ["MEDCONV3D_SPACINGS_TYPE"] = spacings_type
-        mlflow.log_param("spacings_type", spacings_type)
+        if spacings_type == 'normal_resample':
+            os.environ["MEDCONV3D_SPACINGS_TYPE"] = "normal"
 
+        mlflow.log_param("spacings_type", spacings_type)
+        resample_transform = Spacingd(keys=["image", "label"], pixdim=(1.5, 1.5, 2.0), mode=("bilinear", "nearest"))
         train_transforms = Compose(
             [
                 LoadImaged(keys=["image", "label"]),
@@ -89,7 +92,7 @@ for spacings_type in ['normal', 'during', 'after']:
                 ),
                 CropForegroundd(keys=["image", "label"], source_key="image", allow_smaller=True),
                 Orientationd(keys=["image", "label"], axcodes="RAS"),
-                # Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 1.0), mode=("bilinear", "nearest")),
+                resample_transform if spacings_type == 'normal_resample' else lambda x: x,
                 RandCropByPosNegLabeld(
                     keys=["image", "label"],
                     label_key="label",
@@ -128,7 +131,7 @@ for spacings_type in ['normal', 'during', 'after']:
                 ),
                 CropForegroundd(keys=["image", "label"], source_key="image", allow_smaller=True),
                 Orientationd(keys=["image", "label"], axcodes="RAS"),
-                # Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 1.0), mode=("bilinear", "nearest")),
+                resample_transform if spacings_type == 'normal_resample' else lambda x: x,
             ]
         )
 
