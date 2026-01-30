@@ -9,11 +9,6 @@ import random
 import numpy as np
 import os
 
-# set spacing env variable for testing
-os.environ['SPACING'] = '0.3,0.7,0.9'
-
-os.environ['SPACING_TYPE'] = 'during'
-
 
 
 class NaiveConv3D(nn.Module):
@@ -144,15 +139,15 @@ class MedConv3D(torch.nn.Conv3d):
     def _conv_forward(self, input: Tensor, weight: Tensor, bias: Optional[Tensor]) -> Tensor:
 
         
-        spacing_env = os.getenv('SPACING')
+        spacing_env = os.getenv('MEDCONV3D_SPACINGS')
         if spacing_env is not None:
             spacing = tuple(map(float, spacing_env.split(',')))
 
-        spacing_type = os.getenv('SPACING_TYPE')
+        spacing_type = os.getenv('MEDCONV3D_SPACINGS_TYPE')
 
-        assert spacing_type in ['during', 'after'], "SPACING_TYPE must be 'during' or 'after'"
+        assert spacing_type in ['during', 'after', 'normal'], "SPACING_TYPE must be 'during', 'after', or 'normal'"
 
-        if spacing is not None and spacing_type == 'during':
+        if spacing is not None and spacing_type == 'during' and not self.stride == (2,2,2):
             spacing_kernel = self.get_spacing_kernel(spacing).to(
                 device=input.device, dtype=input.dtype
             )
@@ -177,16 +172,24 @@ class MedConv3D(torch.nn.Conv3d):
             input, weight, bias, self.stride, self.padding, self.dilation, self.groups
         )
 
-        if spacing is not None and spacing_type == 'after':
+        if spacing is not None and spacing_type == 'after' and not self.stride == (2,2,2):
             spacing_kernel = self.get_spacing_kernel(spacing).to(
                 device=input.device, dtype=input.dtype
             )
 
             spacing_kernel.unsqueeze_(0).unsqueeze_(0)
+            
+            #repeat spacing kernel for each channel
+            out_channels = weight.shape[0]
+            spacing_kernel = spacing_kernel.repeat(out_channels, out_channels, 1, 1, 1)
 
             x = F.conv3d(
                 x, spacing_kernel, bias, self.stride, "same", self.dilation, self.groups
             )
+        
+        if spacing_type == 'normal':
+            #normal convollution
+            pass
 
         return x
 

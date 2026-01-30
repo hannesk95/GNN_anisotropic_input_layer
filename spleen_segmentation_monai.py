@@ -1,3 +1,7 @@
+import torch
+from MedConv3D import MedConv3D
+torch.nn.Conv3d = MedConv3D
+
 from monai.utils import first, set_determinism
 from monai.transforms import (
     AsDiscrete,
@@ -13,7 +17,7 @@ from monai.transforms import (
     Spacingd,
     Invertd,
 RandAffined,
-RandFlip,
+RandFlipd,
 RandScaleIntensityd,
 RandShiftIntensityd
 )
@@ -33,6 +37,8 @@ import tempfile
 import shutil
 import os
 import glob
+import numpy as np
+import mlflow
 
 directory = os.environ.get("MONAI_DATA_DIRECTORY")
 if directory is not None:
@@ -45,6 +51,7 @@ md5 = "410d4a301da4e5b2f6f86ec3ddba524e"
 
 compressed_file = os.path.join(root_dir, "Task09_Spleen.tar")
 data_dir = os.path.join(root_dir, "Task09_Spleen")
+data_dir = "./Task09_Spleen"  # --- IGNORE ---
 if not os.path.exists(data_dir):
     download_and_extract(resource, compressed_file, root_dir, md5)
 
@@ -55,7 +62,10 @@ train_files, val_files = data_dicts[:-9], data_dicts[-9:]
 
 set_determinism(seed=0)
 
-patch_size = (128, 128, 128)
+patch_size = (160, 160, 32)
+# 'during', 'after', 'normal'
+os.environ["MEDCONV3D_SPACINGS_TYPE"] = "after"
+mlflow.set_experiment(f"spleen_segmentation_monai_medconv3d_{os.environ['MEDCONV3D_SPACINGS_TYPE']}")
 
 train_transforms = Compose(
     [
@@ -71,7 +81,7 @@ train_transforms = Compose(
         ),
         CropForegroundd(keys=["image", "label"], source_key="image", allow_smaller=True),
         Orientationd(keys=["image", "label"], axcodes="RAS"),
-        Spacingd(keys=["image", "label"], pixdim=(1.5, 1.5, 2.0), mode=("bilinear", "nearest")),
+        # Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 1.0), mode=("bilinear", "nearest")),
         RandCropByPosNegLabeld(
             keys=["image", "label"],
             label_key="label",
@@ -91,7 +101,7 @@ train_transforms = Compose(
         RandAffined(
             keys=['image', 'label'],
             mode=('bilinear', 'nearest'),
-            prob=1.0, spatial_size=patch_size,
+            prob=0.0, spatial_size=patch_size,
             rotate_range=(0, 0, np.pi/15),
             scale_range=(0.1, 0.1, 0.1)),
     ]
@@ -110,7 +120,7 @@ val_transforms = Compose(
         ),
         CropForegroundd(keys=["image", "label"], source_key="image", allow_smaller=True),
         Orientationd(keys=["image", "label"], axcodes="RAS"),
-        Spacingd(keys=["image", "label"], pixdim=(1.5, 1.5, 2.0), mode=("bilinear", "nearest")),
+        # Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 1.0), mode=("bilinear", "nearest")),
     ]
 )
 
@@ -122,7 +132,7 @@ train_ds = CacheDataset(data=train_files, transform=train_transforms, cache_rate
 
 # use batch_size=2 to load images and use RandCropByPosNegLabeld
 # to generate 2 x 4 images for network training
-train_loader = DataLoader(train_ds, batch_size=2, shuffle=True, num_workers=4)
+train_loader = DataLoader(train_ds, batch_size=1, shuffle=True, num_workers=4)
 
 val_ds = CacheDataset(data=val_files, transform=val_transforms, cache_rate=1.0, num_workers=4)
 # val_ds = Dataset(data=val_files, transform=val_transforms)
@@ -140,7 +150,7 @@ model = UNet(
     channels=(16, 32, 64, 128, 256),
     strides=(2, 2, 2, 2),
     num_res_units=2,
-    norm=Norm.BATCH,
+    norm=Norm.INSTANCE,
 ).to(device)
 loss_function = DiceCELoss(to_onehot_y=True, softmax=True)
 optimizer = torch.optim.SGD(model.parameters(), lr=1e-2, weight_decay=3e-5, momentum=0.99, nesterov=True)
@@ -159,17 +169,20 @@ post_label = Compose([AsDiscrete(to_onehot=2)])
 
 iter_loader = iter(train_loader)
 
+spacings_list = []
 for epoch in range(max_epochs):
     print("-" * 10)
     print(f"epoch {epoch + 1}/{max_epochs}")
     model.train()
     epoch_loss = 0
     step = 0
-    for i in iterations_per_epoch:
+    for i in range(iterations_per_epoch):
         try:
             batch_data = next(iter_loader)
-        except Exception:
+        except Exception as e:
+            print(e)
             iter_loader = iter(train_loader)
+            batch_data = next(iter_loader)
 
         step += 1
         inputs, labels = (
@@ -177,6 +190,15 @@ for epoch in range(max_epochs):
             batch_data["label"].to(device),
         )
         optimizer.zero_grad()
+        spacing = str(batch_data["image"].pixdim[0].tolist())[1:-1].replace(" ","")
+        os.environ["MEDCONV3D_SPACINGS"] = spacing
+
+        if epoch == 0:
+            spacings_list.append(spacing)
+        
+        if epoch == 1 and step == 0:            
+            mlflow.log_param("spacings_used", spacings_list)
+
         outputs = model(inputs)
         loss = loss_function(outputs, labels)
         loss.backward()
@@ -186,6 +208,8 @@ for epoch in range(max_epochs):
     epoch_loss /= step
     epoch_loss_values.append(epoch_loss)
     print(f"epoch {epoch + 1} average loss: {epoch_loss:.4f}")
+
+    mlflow.log_metric("train_loss", epoch_loss, step=epoch + 1)
 
     print("LR scheduler lr : " + str(lr_scheduler.get_last_lr()))
     lr_scheduler.step()
@@ -221,6 +245,9 @@ for epoch in range(max_epochs):
                 f"\nbest mean dice: {best_metric:.4f} "
                 f"at epoch: {best_metric_epoch}"
             )
+    
+        mlflow.log_metric("val_mean_dice", metric, step=epoch + 1)
+        
 
 print(f"train completed, best_metric: {best_metric:.4f} " f"at epoch: {best_metric_epoch}")
 
