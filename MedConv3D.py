@@ -142,12 +142,15 @@ class MedConv3D(torch.nn.Conv3d):
                                         device=device, dtype=dtype)
 
     def _conv_forward(self, input: Tensor, weight: Tensor, bias: Optional[Tensor]) -> Tensor:
+
         
-        spacing_env = os.getenv('SPACING', None)
+        spacing_env = os.getenv('SPACING')
         if spacing_env is not None:
             spacing = tuple(map(float, spacing_env.split(',')))
 
         spacing_type = os.getenv('SPACING_TYPE')
+
+        assert spacing_type in ['during', 'after'], "SPACING_TYPE must be 'during' or 'after'"
 
         if spacing is not None and spacing_type == 'during':
             spacing_kernel = self.get_spacing_kernel(spacing).to(
