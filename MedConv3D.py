@@ -12,7 +12,7 @@ import os
 # set spacing env variable for testing
 os.environ['SPACING'] = '0.3,0.7,0.9'
 
-os.environ['SPACING_TYPE'] = 'after'
+os.environ['SPACING_TYPE'] = 'during'
 
 
 
@@ -142,12 +142,15 @@ class MedConv3D(torch.nn.Conv3d):
                                         device=device, dtype=dtype)
 
     def _conv_forward(self, input: Tensor, weight: Tensor, bias: Optional[Tensor]) -> Tensor:
+
         
-        spacing_env = os.getenv('SPACING', None)
+        spacing_env = os.getenv('SPACING')
         if spacing_env is not None:
             spacing = tuple(map(float, spacing_env.split(',')))
 
-        spacing_type = os.getenv('SPACING_TYPE', 'after')
+        spacing_type = os.getenv('SPACING_TYPE')
+
+        assert spacing_type in ['during', 'after'], "SPACING_TYPE must be 'during' or 'after'"
 
         if spacing is not None and spacing_type == 'during':
             spacing_kernel = self.get_spacing_kernel(spacing).to(
@@ -178,8 +181,11 @@ class MedConv3D(torch.nn.Conv3d):
             spacing_kernel = self.get_spacing_kernel(spacing).to(
                 device=input.device, dtype=input.dtype
             )
+
+            spacing_kernel.unsqueeze_(0).unsqueeze_(0)
+
             x = F.conv3d(
-                x, spacing_kernel, bias, self.stride, self.padding, self.dilation, self.groups
+                x, spacing_kernel, bias, self.stride, "same", self.dilation, self.groups
             )
 
         return x
